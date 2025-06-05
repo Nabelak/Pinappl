@@ -1,0 +1,1767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pineapple Platformer</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden; /* Prevent scrollbars */
+            background-color: #2F4F4F; /* Dark Slate Gray - a darker blue/gray */
+            display: flex; /* Use flexbox to center content */
+            justify-content: center; /* Center horizontally */
+            align-items: center; /* Center vertically */
+            min-height: 100vh;
+            font-family: sans-serif;
+        }
+        /* General canvas styling */
+        canvas {
+            display: block; /* Remove extra space below canvas */
+            /* Dimensions will be set by JavaScript to maintain aspect ratio */
+        }
+        /* Specific styling for the game canvas */
+        #gameCanvas {
+            border: 2px solid #000; /* Border only for the main game area */
+            background-color: #ADD8E6; /* Lighter blue for game area background */
+        }
+        #gameArea {
+            position: relative;
+            /* Using flexbox on body to center content, so gameArea takes full viewport */
+            width: 100vw;
+            height: 100vh;
+            display: flex; /* Flexbox for centering the canvas inside gameArea */
+            justify-content: center;
+            align-items: center;
+        }
+        /* Styling for the choice dialog */
+        #choiceDialog {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(255, 255, 255, 0.95);
+            padding: 30px;
+            border: 3px solid #000;
+            border-radius: 15px;
+            text-align: center;
+            z-index: 100;
+            display: none; /* Hidden by default */
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+            font-size: 1.2em;
+        }
+        #choiceDialog p {
+            margin-bottom: 20px;
+            font-weight: bold;
+            color: #333;
+        }
+        #choiceDialog button {
+            margin: 0 10px;
+            padding: 12px 25px;
+            font-size: 1em;
+            cursor: pointer;
+            border: 2px solid #000;
+            border-radius: 8px;
+            background-color: #4CAF50; /* Green */
+            color: white;
+            transition: background-color 0.3s ease, transform 0.1s ease;
+        }
+        #choiceDialog button:hover {
+            background-color: #45a049;
+            transform: translateY(-2px);
+        }
+        #choiceDialog button:active {
+            transform: translateY(0);
+        }
+
+        #livesDisplay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            font-size: 24px;
+            color: #FF0000; /* Red color for hearts */
+            z-index: 50;
+            /* This div will contain the canvas-drawn hearts */
+            width: auto; /* Adjust width based on content */
+            height: 30px; /* Sufficient height for hearts */
+            display: flex; /* Allow hearts to sit side-by-side */
+            align-items: center;
+            /* Removed border and background from here */
+        }
+
+        #scoreDisplay {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            font-size: 24px;
+            color: #000000; /* Black color for score */
+            z-index: 50;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="gameArea">
+        <canvas id="gameCanvas"></canvas>
+        <div id="choiceDialog">
+            <p id="choiceText"></p>
+            <button id="option1Button"></button>
+            <button id="option2Button"></button>
+        </div>
+        <div id="livesDisplay">
+            <canvas id="livesCanvas" width="150" height="30"></canvas>
+        </div>
+        <div id="scoreDisplay">Score: 0</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameArea = document.getElementById('gameArea');
+        const choiceDialog = document.getElementById('choiceDialog');
+        const choiceText = document.getElementById('choiceText');
+        const option1Button = document.getElementById('option1Button');
+        const option2Button = document.getElementById('option2Button');
+        const livesDisplay = document.getElementById('livesDisplay');
+        const scoreDisplay = document.getElementById('scoreDisplay'); // Get the score display element
+
+        // Separate canvas for drawing lives
+        const livesCanvas = document.getElementById('livesCanvas');
+        const livesCtx = livesCanvas.getContext('2d');
+
+        // Define a base resolution for level design - all raw level coordinates are based on this
+        const BASE_GAME_WIDTH = 800;
+        const BASE_GAME_HEIGHT = 600;
+        const ASPECT_RATIO = BASE_GAME_WIDTH / BASE_GAME_HEIGHT;
+
+        // --- Game Variables ---
+        let gravity = 0.8; // Will be scaled
+        let jumpStrength = -20; // Will be scaled
+        let moveSpeed = 8; // Will be scaled
+        const MAX_FULL_HEARTS = 6; // Max hearts set to 6
+        let lives = MAX_FULL_HEARTS; // Current lives (can be half values)
+        let score = 0; // Initialize score
+
+        let player = {
+            x: 50, // Will be scaled
+            y: BASE_GAME_HEIGHT - 80, // Will be scaled
+            oldY: BASE_GAME_HEIGHT - 80, // Will be scaled
+            width: 40, // Will be scaled
+            height: 40, // Will be scaled
+            color: '#F8D148', // Base color for pineapple
+            leafColor: '#008000', // Color for pineapple leaves
+            velocityY: 0,
+            isJumping: false,
+            isOnGround: false,
+        };
+
+        // Global variable to store the next level index after a heart is collected
+        let nextLevelAfterHeart = -1;
+        let gamePaused = false; // To pause game loop when dialog is open
+
+        // --- Background Elements ---
+        // Clouds are not scaled by level, but their positions will be scaled on canvas resize
+        let clouds = [
+            { x: 100, y: 50, width: 80, height: 30, speed: 0.3 },
+            { x: 300, y: 100, width: 100, height: 40, speed: 0.2 },
+            { x: 600, y: 70, width: 90, height: 35, speed: 0.25 },
+            { x: -50, y: 120, width: 120, height: 45, speed: 0.15 },
+            { x: 400, y: 20, width: 70, height: 25, speed: 0.35 }
+        ];
+
+        // Snowflakes for snowy levels
+        let snowflakes = [];
+        const NUM_SNOWFLAKES = 100;
+
+        function createSnowflakes() {
+            snowflakes = [];
+            for (let i = 0; i < NUM_SNOWFLAKES; i++) {
+                snowflakes.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    radius: Math.random() * 2 + 1, // 1 to 3 pixels
+                    speedY: Math.random() * 1 + 0.5, // 0.5 to 1.5
+                    speedX: Math.random() * 1 - 0.5 // -0.5 to 0.5 for slight horizontal drift
+                });
+            }
+        }
+
+        function updateSnowflakes() {
+            snowflakes.forEach(flake => {
+                flake.y += flake.speedY;
+                flake.x += flake.speedX;
+
+                // If snowflake goes off screen, reset it to the top
+                if (flake.y > canvas.height) {
+                    flake.y = -flake.radius;
+                    flake.x = Math.random() * canvas.width;
+                }
+                // If snowflake goes off horizontal bounds, wrap it around
+                if (flake.x < -flake.radius) {
+                    flake.x = canvas.width + flake.radius;
+                } else if (flake.x > canvas.width + flake.radius) {
+                    flake.x = -flake.radius;
+                }
+            });
+        }
+
+        function drawSnowflakes() {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)'; // White, slightly transparent
+            snowflakes.forEach(flake => {
+                ctx.beginPath();
+                ctx.arc(flake.x, flake.y, flake.radius, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+
+        // --- Level Data (Raw, unscaled) ---
+        const rawLevelsData = [
+            // Level 1 (Mountain)
+            [
+                { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#8B4513' }, // Start platform
+                { type: 'platform', x: 150, y: BASE_GAME_HEIGHT - 100, width: 100, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 300, y: BASE_GAME_HEIGHT - 180, width: 100, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 450, y: BASE_GAME_HEIGHT - 100, width: 100, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 600, y: BASE_GAME_HEIGHT - 250, width: 100, height: 20, color: '#8B4513' },
+                { type: 'obstacle', x: 200, y: BASE_GAME_HEIGHT - 120, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 650, y: BASE_GAME_HEIGHT - 270, width: 20, height: 20, color: '#FF0000' }, // Added obstacle
+                { type: 'opponent', x: 500, y: BASE_GAME_HEIGHT - 120, width: 30, height: 30, color: '#0000FF', speed: 1.2, direction: 1, initialX: 500, range: 50 },
+                { type: 'coin', x: 180, y: BASE_GAME_HEIGHT - 120, width: 20, height: 20, color: '#FFD700' }, // Coin
+                { type: 'coin', x: 350, y: BASE_GAME_HEIGHT - 200, width: 20, height: 20, color: '#FFD700' }, // Coin
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 70, width: 30, height: 50, color: '#00FF00' }
+            ],
+            // Level 2 (Mountain)
+            [
+                { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#8B4513' }, // Start platform
+                { type: 'platform', x: 100, y: BASE_GAME_HEIGHT - 150, width: 150, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 300, y: BASE_GAME_HEIGHT - 250, width: 150, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 500, y: BASE_GAME_HEIGHT - 150, width: 150, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 700, y: BASE_GAME_HEIGHT - 250, width: 80, height: 20, color: '#8B4513' },
+                { type: 'obstacle', x: 150, y: BASE_GAME_HEIGHT - 170, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 350, y: BASE_GAME_HEIGHT - 270, width: 20, height: 20, color: '#FF0000' }, // Added obstacle
+                { type: 'obstacle', x: 600, y: BASE_GAME_HEIGHT - 170, width: 20, height: 20, color: '#FF0000' },
+                { type: 'opponent', x: 400, y: BASE_GAME_HEIGHT - 170, width: 30, height: 30, color: '#0000FF', speed: 1.5, direction: -1, initialX: 400, range: 80 },
+                { type: 'coin', x: 120, y: BASE_GAME_HEIGHT - 170, width: 20, height: 20, color: '#FFD700' }, // Coin
+                { type: 'coin', x: 550, y: BASE_GAME_HEIGHT - 170, width: 20, height: 20, color: '#FFD700' }, // Coin
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 270, width: 30, height: 50, color: '#00FF00' }
+            ],
+            // Level 3 (Mountain)
+            [
+                { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#8B4513' }, // Start platform
+                { type: 'platform', x: 50, y: BASE_GAME_HEIGHT - 120, width: 80, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 200, y: BASE_GAME_HEIGHT - 200, width: 80, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 350, y: BASE_GAME_HEIGHT - 120, width: 80, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 500, y: BASE_GAME_HEIGHT - 250, width: 120, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 650, y: BASE_GAME_HEIGHT - 150, width: 100, height: 20, color: '#8B4513' },
+                { type: 'obstacle', x: 100, y: BASE_GAME_HEIGHT - 140, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 300, y: BASE_GAME_HEIGHT - 200, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 550, y: BASE_GAME_HEIGHT - 270, width: 20, height: 20, color: '#FF0000' },
+                { type: 'opponent', x: 600, y: BASE_GAME_HEIGHT - 170, width: 30, height: 30, color: '#0000FF', speed: 1.8, direction: 1, initialX: 600, range: 100 },
+                { type: 'coin', x: 70, y: BASE_GAME_HEIGHT - 140, width: 20, height: 20, color: '#FFD700' }, // Coin
+                { type: 'coin', x: 220, y: BASE_GAME_HEIGHT - 220, width: 20, height: 20, color: '#FFD700' }, // Coin
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 170, width: 30, height: 50, color: '#00FF00' }
+            ],
+            // Level 4 (Mountain)
+            [
+                { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#8B4513' }, // Start platform
+                { type: 'platform', x: 100, y: BASE_GAME_HEIGHT - 100, width: 50, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 250, y: BASE_GAME_HEIGHT - 180, width: 50, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 400, y: BASE_GAME_HEIGHT - 260, width: 50, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 550, y: BASE_GAME_HEIGHT - 180, width: 50, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 700, y: BASE_GAME_HEIGHT - 100, width: 50, height: 20, color: '#8B4513' },
+                { type: 'obstacle', x: 120, y: BASE_GAME_HEIGHT - 120, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 450, y: BASE_GAME_HEIGHT - 200, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 600, y: BASE_GAME_HEIGHT - 120, width: 20, height: 20, color: '#FF0000' },
+                { type: 'opponent', x: 200, y: BASE_GAME_HEIGHT - 200, width: 30, height: 30, color: '#0000FF', speed: 1.5, direction: 1, initialX: 200, range: 50 },
+                { type: 'opponent', x: 750, y: BASE_GAME_HEIGHT - 120, width: 30, height: 30, color: '#0000FF', speed: 1.4, direction: -1, initialX: 750, range: 40 },
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 120, width: 30, height: 50, color: '#00FF00' }
+            ],
+            // Level 5 (Mountain - Transition to Desert after this level)
+            [
+                { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#8B4513' }, // Start platform
+                { type: 'platform', x: 100, y: BASE_GAME_HEIGHT - 150, width: 100, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 300, y: BASE_GAME_HEIGHT - 100, width: 100, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 500, y: BASE_GAME_HEIGHT - 150, width: 100, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 700, y: BASE_GAME_HEIGHT - 200, width: 80, height: 20, color: '#8B4513' },
+                { type: 'platform', x: 400, y: BASE_GAME_HEIGHT - 250, width: 100, height: 20, color: '#8B4513' },
+                { type: 'obstacle', x: 150, y: BASE_GAME_HEIGHT - 170, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 450, y: BASE_GAME_HEIGHT - 270, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 550, y: BASE_GAME_HEIGHT - 170, width: 20, height: 20, color: '#FF0000' },
+                { type: 'opponent', x: 600, y: BASE_GAME_HEIGHT - 220, width: 30, height: 30, color: '#0000FF', speed: 1.8, direction: -1, initialX: 600, range: 80 },
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 220, width: 30, height: 50, color: '#00FF00' }
+            ],
+             // Level 6 (Desert - Start of Obstacles/Opponents)
+             [
+                { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#C19A6B' }, // Start platform
+                { type: 'platform', x: 50, y: BASE_GAME_HEIGHT - 100, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 200, y: BASE_GAME_HEIGHT - 180, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 350, y: BASE_GAME_HEIGHT - 250, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 500, y: BASE_GAME_HEIGHT - 180, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 650, y: BASE_GAME_HEIGHT - 100, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'obstacle', x: 100, y: BASE_GAME_HEIGHT - 120, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 400, y: BASE_GAME_HEIGHT - 270, width: 20, height: 20, color: '#FF0000' },
+                { type: 'opponent', x: 400, y: BASE_GAME_HEIGHT - 270, width: 30, height: 30, color: '#0000FF', speed: 1.5, direction: 1, initialX: 400, range: 80 },
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 120, width: 30, height: 50, color: '#00FF00' }
+            ],
+             // Level 7 (Desert)
+             [
+                 { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#C19A6B' }, // Start platform
+                { type: 'platform', x: 100, y: BASE_GAME_HEIGHT - 150, width: 120, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 300, y: BASE_GAME_HEIGHT - 200, width: 120, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 500, y: BASE_GAME_HEIGHT - 250, width: 120, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 700, y: BASE_GAME_HEIGHT - 300, width: 80, height: 20, color: '#C19A6B' },
+                { type: 'obstacle', x: 150, y: BASE_GAME_HEIGHT - 170, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 200, y: BASE_GAME_HEIGHT - 170, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 600, y: BASE_GAME_HEIGHT - 270, width: 20, height: 20, color: '#FF0000' },
+                { type: 'opponent', x: 400, y: BASE_GAME_HEIGHT - 220, width: 30, height: 30, color: '#0000FF', speed: 1.7, direction: -1, initialX: 400, range: 100 },
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 320, width: 30, height: 50, color: '#00FF00' }
+            ],
+             // Level 8 (Desert)
+             [
+                 { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#C19A6B' }, // Start platform
+                { type: 'platform', x: 50, y: BASE_GAME_HEIGHT - 120, width: 60, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 150, y: BASE_GAME_HEIGHT - 200, width: 60, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 250, y: BASE_GAME_HEIGHT - 280, width: 60, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 350, y: BASE_GAME_HEIGHT - 360, width: 60, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 450, y: BASE_GAME_HEIGHT - 280, width: 60, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 550, y: BASE_GAME_HEIGHT - 200, width: 60, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 650, y: BASE_GAME_HEIGHT - 100, width: 150, height: 20, color: '#C19A6B' }, // Wider final platform
+                { type: 'obstacle', x: 100, y: BASE_GAME_HEIGHT - 140, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 300, y: BASE_GAME_HEIGHT - 300, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 500, y: BASE_GAME_HEIGHT - 300, width: 20, height: 20, color: '#FF0000' },
+                { type: 'opponent', x: 500, y: BASE_GAME_HEIGHT - 220, width: 30, height: 30, color: '#0000FF', speed: 1.5, direction: 1, initialX: 500, range: 50 },
+                { type: 'opponent', x: 700, y: BASE_GAME_HEIGHT - 140, width: 30, height: 30, color: '#0000FF', speed: 2, direction: -1, initialX: 700, range: 80 },
+                { type: 'exit', x: 760, y: BASE_GAME_HEIGHT - 120, width: 30, height: 50, color: '#00FF00' } // Exit on the platform
+            ],
+             // Level 9 (Desert)
+             [
+                 { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#C19A6B' }, // Start platform
+                { type: 'platform', x: 100, y: BASE_GAME_HEIGHT - 100, width: 150, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 300, y: BASE_GAME_HEIGHT - 200, width: 150, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 500, y: BASE_GAME_HEIGHT - 300, width: 150, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 700, y: BASE_GAME_HEIGHT - 400, width: 80, height: 20, color: '#C19A6B' },
+                { type: 'obstacle', x: 200, y: BASE_GAME_HEIGHT - 120, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 400, y: BASE_GAME_HEIGHT - 220, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 600, y: BASE_GAME_HEIGHT - 320, width: 20, height: 20, color: '#FF0000' },
+                { type: 'opponent', x: 400, y: BASE_GAME_HEIGHT - 220, width: 30, height: 30, color: '#0000FF', speed: 1.5, direction: 1, initialX: 400, range: 100 },
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 420, width: 30, height: 50, color: '#00FF00' }
+            ],
+             // Level 10 (Desert)
+             [
+                 { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#C19A6B' }, // Start platform
+                { type: 'platform', x: 100, y: BASE_GAME_HEIGHT - 150, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 250, y: BASE_GAME_HEIGHT - 250, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 400, y: BASE_GAME_HEIGHT - 350, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 550, y: BASE_GAME_HEIGHT - 450, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 700, y: BASE_GAME_HEIGHT - 550, width: 80, height: 20, color: '#C19A6B' },
+                { type: 'obstacle', x: 150, y: BASE_GAME_HEIGHT - 170, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 300, y: BASE_GAME_HEIGHT - 270, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 450, y: BASE_GAME_HEIGHT - 370, width: 20, height: 20, color: '#FF0000' },
+                { type: 'opponent', x: 600, y: BASE_GAME_HEIGHT - 470, width: 30, height: 30, color: '#0000FF', speed: 2, direction: -1, initialX: 600, range: 80 },
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 570, width: 30, height: 50, color: '#00FF00' }
+            ],
+             // Level 11 (Desert) - First level with a heart
+             [
+                 { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#C19A6B' }, // Start platform
+                { type: 'platform', x: 100, y: BASE_GAME_HEIGHT - 100, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 300, y: BASE_GAME_HEIGHT - 150, width: 120, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 500, y: BASE_GAME_HEIGHT - 200, width: 140, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 700, y: BASE_GAME_HEIGHT - 250, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'obstacle', x: 150, y: BASE_GAME_HEIGHT - 120, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 550, y: BASE_GAME_HEIGHT - 220, width: 20, height: 20, color: '#FF0000' },
+                { type: 'opponent', x: 350, y: BASE_GAME_HEIGHT - 170, width: 30, height: 30, color: '#0000FF', speed: 1.5, direction: 1, initialX: 350, range: 150 },
+                { type: 'heart', x: 400, y: BASE_GAME_HEIGHT - 200, width: 30, height: 30, color: '#FF0000' }, // Heart item
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 270, width: 30, height: 50, color: '#00FF00' }
+            ],
+             // Level 12 (Desert)
+             [
+                 { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#C19A6B' }, // Start platform
+                { type: 'platform', x: 50, y: BASE_GAME_HEIGHT - 150, width: 80, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 200, y: BASE_GAME_HEIGHT - 100, width: 80, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 350, y: BASE_GAME_HEIGHT - 200, width: 80, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 500, y: BASE_GAME_HEIGHT - 150, width: 80, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 650, y: BASE_GAME_HEIGHT - 250, width: 80, height: 20, color: '#C19A6B' },
+                { type: 'obstacle', x: 70, y: BASE_GAME_HEIGHT - 170, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 250, y: BASE_GAME_HEIGHT - 120, width: 20, height: 20, color: '#FF0000' },
+                { type: 'opponent', x: 100, y: BASE_GAME_HEIGHT - 170, width: 30, height: 30, color: '#0000FF', speed: 1.3, direction: -1, initialX: 100, range: 50 },
+                { type: 'opponent', x: 400, y: BASE_GAME_HEIGHT - 220, width: 30, height: 30, color: '#0000FF', speed: 1.7, direction: 1, initialX: 400, range: 100 },
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 270, width: 30, height: 50, color: '#00FF00' }
+            ],
+             // Level 13 (Desert) - Second level with a heart
+             [
+                 { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#C19A6B' }, // Start platform
+                { type: 'platform', x: 80, y: BASE_GAME_HEIGHT - 100, width: 180, height: 20, color: '#C19A6B' }, // Adjusted
+                { type: 'platform', x: 350, y: BASE_GAME_HEIGHT - 180, width: 180, height: 20, color: '#C19A6B' }, // Adjusted
+                { type: 'platform', x: 620, y: BASE_GAME_HEIGHT - 260, width: 180, height: 20, color: '#C19A6B' }, // Adjusted
+                { type: 'obstacle', x: 120, y: BASE_GAME_HEIGHT - 120, width: 20, height: 20, color: '#FF0000' }, // Adjusted
+                { type: 'obstacle', x: 200, y: BASE_GAME_HEIGHT - 120, width: 20, height: 20, color: '#FF0000' }, // Adjusted
+                { type: 'obstacle', x: 450, y: BASE_GAME_HEIGHT - 200, width: 20, height: 20, color: '#FF0000' }, // Adjusted
+                { type: 'heart', x: 180, y: BASE_GAME_HEIGHT - 100, width: 30, height: 30, color: '#FF0000' }, // Adjusted
+                { type: 'exit', x: 700, y: BASE_GAME_HEIGHT - 280, width: 30, height: 50, color: '#00FF00' } // Adjusted
+            ],
+             // Level 14 (Desert)
+             [
+                 { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#C19A6B' }, // Start platform
+                { type: 'platform', x: 50, y: BASE_GAME_HEIGHT - 200, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 250, y: BASE_GAME_HEIGHT - 150, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 450, y: BASE_GAME_HEIGHT - 250, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 650, y: BASE_GAME_HEIGHT - 200, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'obstacle', x: 80, y: BASE_GAME_HEIGHT - 220, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 300, y: BASE_GAME_HEIGHT - 170, width: 20, height: 20, color: '#FF0000' },
+                { type: 'opponent', x: 100, y: BASE_GAME_HEIGHT - 220, width: 30, height: 30, color: '#0000FF', speed: 1.5, direction: 1, initialX: 100, range: 80 },
+                { type: 'opponent', x: 700, y: BASE_GAME_HEIGHT - 220, width: 30, height: 30, color: '#0000FF', speed: 1.8, direction: -1, initialX: 700, range: 100 },
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 220, width: 30, height: 50, color: '#00FF00' }
+            ],
+             // Level 15 (Desert - Final Level with a heart)
+             [
+                 { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#C19A6B' }, // Start platform
+                { type: 'platform', x: 100, y: BASE_GAME_HEIGHT - 100, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 200, y: BASE_GAME_HEIGHT - 150, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 300, y: BASE_GAME_HEIGHT - 200, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 400, y: BASE_GAME_HEIGHT - 250, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 500, y: BASE_GAME_HEIGHT - 300, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 600, y: BASE_GAME_HEIGHT - 350, width: 100, height: 20, color: '#C19A6B' },
+                { type: 'platform', x: 700, y: BASE_GAME_HEIGHT - 400, width: 80, height: 20, color: '#C19A6B' },
+                { type: 'obstacle', x: 150, y: BASE_GAME_HEIGHT - 120, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 450, y: BASE_GAME_HEIGHT - 270, width: 20, height: 20, color: '#FF0000' },
+                { type: 'obstacle', x: 650, y: BASE_GAME_HEIGHT - 370, width: 20, height: 20, color: '#FF0000' },
+                { type: 'opponent', x: 300, y: BASE_GAME_HEIGHT - 220, width: 30, height: 30, color: '#0000FF', speed: 2, direction: 1, initialX: 300, range: 100 },
+                { type: 'opponent', x: 600, y: BASE_GAME_HEIGHT - 370, width: 30, height: 30, color: '#0000FF', speed: 2.5, direction: -1, initialX: 600, range: 150 },
+                { type: 'heart', x: 720, y: BASE_GAME_HEIGHT - 400, width: 30, height: 30, color: '#FF0000' }, // Heart item
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 420, width: 30, height: 50, color: '#00FF00' }
+            ],
+            // Level 16 (Snowy Mountain)
+            [
+                { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#D3D3D3' }, // Start platform (snowy)
+                { type: 'platform', x: 100, y: BASE_GAME_HEIGHT - 100, width: 100, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 300, y: BASE_GAME_HEIGHT - 180, width: 100, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 500, y: BASE_GAME_HEIGHT - 260, width: 100, height: 20, color: '#D3D3D3' },
+                { type: 'ice_spike', x: 150, y: BASE_GAME_HEIGHT - 120, width: 20, height: 20, color: '#ADD8E6' }, // Ice spike
+                { type: 'snow_beast', x: 350, y: BASE_GAME_HEIGHT - 200, width: 30, height: 30, color: '#6A5ACD', speed: 1.0, direction: 1, initialX: 350, range: 50, behavior_pattern: 'llm_controlled' }, // Snow beast
+                { type: 'coin', x: 120, y: BASE_GAME_HEIGHT - 120, width: 20, height: 20, color: '#FFD700' },
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 70, width: 30, height: 50, color: '#00FF00' }
+            ],
+            // Level 17 (Snowy Mountain)
+            [
+                { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 50, y: BASE_GAME_HEIGHT - 150, width: 120, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 250, y: BASE_GAME_HEIGHT - 250, width: 120, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 450, y: BASE_GAME_HEIGHT - 350, width: 120, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 650, y: BASE_GAME_HEIGHT - 450, width: 120, height: 20, color: '#D3D3D3' },
+                { type: 'ice_spike', x: 100, y: BASE_GAME_HEIGHT - 170, width: 20, height: 20, color: '#ADD8E6' },
+                { type: 'ice_spike', x: 500, y: BASE_GAME_HEIGHT - 370, width: 20, height: 20, color: '#ADD8E6' },
+                { type: 'snow_beast', x: 300, y: BASE_GAME_HEIGHT - 270, width: 30, height: 30, color: '#6A5ACD', speed: 1.3, direction: -1, initialX: 300, range: 80, behavior_pattern: 'llm_controlled' },
+                { type: 'snow_beast', x: 700, y: BASE_GAME_HEIGHT - 470, width: 30, height: 30, color: '#6A5ACD', speed: 1.5, direction: 1, initialX: 700, range: 50, behavior_pattern: 'llm_controlled' },
+                { type: 'coin', x: 170, y: BASE_GAME_HEIGHT - 170, width: 20, height: 20, color: '#FFD700' },
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 470, width: 30, height: 50, color: '#00FF00' }
+            ],
+            // Level 18 (Snowy Mountain)
+            [
+                { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 100, y: BASE_GAME_HEIGHT - 100, width: 80, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 200, y: BASE_GAME_HEIGHT - 200, width: 80, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 300, y: BASE_GAME_HEIGHT - 300, width: 80, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 400, y: BASE_GAME_HEIGHT - 400, width: 80, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 500, y: BASE_GAME_HEIGHT - 300, width: 80, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 600, y: BASE_GAME_HEIGHT - 200, width: 80, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 700, y: BASE_GAME_HEIGHT - 100, width: 80, height: 20, color: '#D3D3D3' },
+                { type: 'ice_spike', x: 150, y: BASE_GAME_HEIGHT - 120, width: 20, height: 20, color: '#ADD8E6' },
+                { type: 'ice_spike', x: 350, y: BASE_GAME_HEIGHT - 320, width: 20, height: 20, color: '#ADD8E6' },
+                { type: 'ice_spike', x: 550, y: BASE_GAME_HEIGHT - 220, width: 20, height: 20, color: '#ADD8E6' },
+                { type: 'snow_beast', x: 250, y: BASE_GAME_HEIGHT - 220, width: 30, height: 30, color: '#6A5ACD', speed: 1.6, direction: 1, initialX: 250, range: 40, behavior_pattern: 'llm_controlled' },
+                { type: 'snow_beast', x: 450, y: BASE_GAME_HEIGHT - 420, width: 30, height: 30, color: '#6A5ACD', speed: 1.9, direction: -1, initialX: 450, range: 60, behavior_pattern: 'llm_controlled' },
+                { type: 'coin', x: 430, y: BASE_GAME_HEIGHT - 420, width: 20, height: 20, color: '#FFD700' },
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 120, width: 30, height: 50, color: '#00FF00' }
+            ],
+            // Level 19 (Snowy Mountain) - Adjusted for difficulty
+            [
+                { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 50, y: BASE_GAME_HEIGHT - 150, width: 100, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 200, y: BASE_GAME_HEIGHT - 250, width: 100, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 350, y: BASE_GAME_HEIGHT - 350, width: 100, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 500, y: BASE_GAME_HEIGHT - 450, width: 100, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 650, y: BASE_GAME_HEIGHT - 550, width: 100, height: 20, color: '#D3D3D3' },
+                { type: 'ice_spike', x: 120, y: BASE_GAME_HEIGHT - 170, width: 20, height: 20, color: '#ADD8E6' },
+                { type: 'ice_spike', x: 270, y: BASE_GAME_HEIGHT - 270, width: 20, height: 20, color: '#ADD8E6' },
+                { type: 'snow_beast', x: 100, y: BASE_GAME_HEIGHT - 170, width: 30, height: 30, color: '#6A5ACD', speed: 2.0, direction: 1, initialX: 100, range: 30, behavior_pattern: 'llm_controlled' },
+                { type: 'snow_beast', x: 400, y: BASE_GAME_HEIGHT - 370, width: 30, height: 30, color: '#6A5ACD', speed: 2.3, direction: -1, initialX: 400, range: 40, behavior_pattern: 'llm_controlled' },
+                { type: 'heart', x: 550, y: BASE_GAME_HEIGHT - 450, width: 30, height: 30, color: '#FF0000' },
+                { type: 'exit', x: 700, y: BASE_GAME_HEIGHT - 570, width: 30, height: 50, color: '#00FF00' }
+            ],
+            // Level 20 (Snowy Mountain)
+            [
+                { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 100, y: BASE_GAME_HEIGHT - 100, width: 80, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 200, y: BASE_GAME_HEIGHT - 180, width: 80, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 300, y: BASE_GAME_HEIGHT - 260, width: 80, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 400, y: BASE_GAME_HEIGHT - 340, width: 80, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 500, y: BASE_GAME_HEIGHT - 420, width: 80, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 600, y: BASE_GAME_HEIGHT - 500, width: 80, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 700, y: BASE_GAME_HEIGHT - 570, width: 80, height: 20, color: '#D3D3D3' },
+                { type: 'ice_spike', x: 150, y: BASE_GAME_HEIGHT - 120, width: 20, height: 20, color: '#ADD8E6' },
+                { type: 'ice_spike', x: 350, y: BASE_GAME_HEIGHT - 280, width: 20, height: 20, color: '#ADD8E6' },
+                { type: 'ice_spike', x: 550, y: BASE_GAME_HEIGHT - 440, width: 20, height: 20, color: '#ADD8E6' },
+                { type: 'snow_beast', x: 250, y: BASE_GAME_HEIGHT - 200, width: 30, height: 30, color: '#6A5ACD', speed: 2.5, direction: 1, initialX: 250, range: 60, behavior_pattern: 'llm_controlled' },
+                { type: 'snow_beast', x: 450, y: BASE_GAME_HEIGHT - 360, width: 30, height: 30, color: '#6A5ACD', speed: 2.8, direction: -1, initialX: 450, range: 90, behavior_pattern: 'llm_controlled' },
+                { type: 'snow_beast', x: 650, y: BASE_GAME_HEIGHT - 520, width: 30, height: 30, color: '#6A5ACD', speed: 3.0, direction: 1, initialX: 650, range: 40, behavior_pattern: 'llm_controlled' },
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 590, width: 30, height: 50, color: '#00FF00' }
+            ],
+            // Level 21 (Snowy Mountain - Final Level)
+            [
+                { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 30, width: 200, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 100, y: BASE_GAME_HEIGHT - 150, width: 100, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 250, y: BASE_GAME_HEIGHT - 250, width: 100, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 400, y: BASE_GAME_HEIGHT - 350, width: 100, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 550, y: BASE_GAME_HEIGHT - 450, width: 100, height: 20, color: '#D3D3D3' },
+                { type: 'platform', x: 700, y: BASE_GAME_HEIGHT - 550, width: 80, height: 20, color: '#D3D3D3' },
+                { type: 'ice_spike', x: 150, y: BASE_GAME_HEIGHT - 170, width: 20, height: 20, color: '#ADD8E6' },
+                { type: 'ice_spike', x: 300, y: BASE_GAME_HEIGHT - 270, width: 20, height: 20, color: '#ADD8E6' },
+                { type: 'ice_spike', x: 450, y: BASE_GAME_HEIGHT - 370, width: 20, height: 20, color: '#ADD8E6' },
+                { type: 'ice_spike', x: 600, y: BASE_GAME_HEIGHT - 470, width: 20, height: 20, color: '#ADD8E6' },
+                { type: 'snow_beast', x: 200, y: BASE_GAME_HEIGHT - 170, width: 30, height: 30, color: '#6A5ACD', speed: 2.8, direction: 1, initialX: 200, range: 80, behavior_pattern: 'llm_controlled' },
+                { type: 'snow_beast', x: 500, y: BASE_GAME_HEIGHT - 370, width: 30, height: 30, color: '#6A5ACD', speed: 3.2, direction: -1, initialX: 500, range: 100, behavior_pattern: 'llm_controlled' },
+                { type: 'snow_beast', x: 700, y: BASE_GAME_HEIGHT - 570, width: 30, height: 30, color: '#6A5ACD', speed: 3.5, direction: 1, initialX: 700, range: 50, behavior_pattern: 'llm_controlled' },
+                { type: 'exit', x: 750, y: BASE_GAME_HEIGHT - 570, width: 30, height: 50, color: '#00FF00' }
+            ]
+        ];
+
+        // Raw rest level data (unscaled)
+        const rawRestLevelData = [
+            { type: 'platform', x: 0, y: BASE_GAME_HEIGHT - 20, width: BASE_GAME_WIDTH, height: 20, color: '#A0D6B4' }, // Green ground
+            { type: 'platform', x: BASE_GAME_WIDTH / 2 - 100, y: BASE_GAME_HEIGHT - 150, width: 200, height: 20, color: '#A0D6B4' }, // Floating platform
+            { type: 'friend', x: BASE_GAME_WIDTH * 0.2, y: BASE_GAME_HEIGHT - 60, width: 40, height: 40, color: '#FFD700' }, // A 'friend' character
+            { type: 'friend', x: BASE_GAME_WIDTH * 0.8 - 40, y: BASE_GAME_HEIGHT - 60, width: 40, height: 40, color: '#FFD700' }, // Another 'friend'
+            { type: 'friend', x: BASE_GAME_WIDTH / 2 - 20, y: BASE_GAME_HEIGHT - 190, width: 40, height: 40, color: '#FFD700' }, // Floating friend
+            { type: 'exit', x: BASE_GAME_WIDTH - 80, y: BASE_GAME_HEIGHT - 70, width: 30, height: 50, color: '#00FF00' } // Exit back to main game
+        ];
+
+        const REST_LEVEL_INDEX = rawLevelsData.length; // This will be the index of the rest level
+
+        let currentLevelIndex = 0;
+        let gameObjects = []; // Array to hold all objects in the current level
+
+        // --- Input Handling ---
+        let keys = {};
+        window.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            // Cheat: Add a life if 'x' is pressed
+            if (e.key === 'x' || e.key === 'X') {
+                if (lives < MAX_FULL_HEARTS) { // Check against MAX_FULL_HEARTS
+                    lives = Math.min(lives + 0.5, MAX_FULL_HEARTS); // Add half a heart, cap at max
+                    updateLivesDisplay();
+                }
+            }
+            // Cheat: Skip level if 'y' is pressed
+            if (e.key === 'y' || e.key === 'Y') {
+                loadLevel(currentLevelIndex + 1);
+            }
+        });
+        window.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        // New touch variables
+        let touchActive = false;
+        let touchStartX = 0;
+        let touchStartY = 0;
+        let touchCurrentX = 0;
+        let touchCurrentY = 0;
+        const SWIPE_THRESHOLD = 50; // Minimum pixel distance for a swipe to register
+        const TAP_ZONE_WIDTH_RATIO = 0.3; // 30% of screen width for left/right tap zones
+
+        window.addEventListener('touchstart', (e) => {
+            e.preventDefault(); // Prevent default browser touch behavior (like scrolling)
+            touchActive = true;
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+            touchCurrentX = touchStartX;
+            touchCurrentY = touchStartY;
+
+            // Determine initial horizontal movement based on tap zone
+            if (touchStartX < canvas.width * TAP_ZONE_WIDTH_RATIO) {
+                keys['ArrowLeft'] = true;
+                keys['ArrowRight'] = false;
+            } else if (touchStartX > canvas.width * (1 - TAP_ZONE_WIDTH_RATIO)) {
+                keys['ArrowRight'] = true;
+                keys['ArrowLeft'] = false;
+            } else {
+                // Middle zone, no immediate horizontal movement
+                keys['ArrowLeft'] = false;
+                keys['ArrowRight'] = false;
+            }
+        }, { passive: false }); // Use passive: false to allow preventDefault
+
+        window.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            touchCurrentX = e.touches[0].clientX;
+            touchCurrentY = e.touches[0].clientY;
+
+            // Adjust horizontal movement if touch moves into a different zone
+            if (touchCurrentX < canvas.width * TAP_ZONE_WIDTH_RATIO) {
+                keys['ArrowLeft'] = true;
+                keys['ArrowRight'] = false;
+            } else if (touchCurrentX > canvas.width * (1 - TAP_ZONE_WIDTH_RATIO)) {
+                keys['ArrowRight'] = true;
+                keys['ArrowLeft'] = false;
+            } else {
+                // If moved to middle zone, stop horizontal movement
+                keys['ArrowLeft'] = false;
+                keys['ArrowRight'] = false;
+            }
+        }, { passive: false });
+
+        window.addEventListener('touchend', (e) => {
+            touchActive = false;
+            let deltaX = e.changedTouches[0].clientX - touchStartX;
+            let deltaY = e.changedTouches[0].clientY - touchStartY;
+
+            // Check for jump swipe (primarily vertical and upward)
+            if (Math.abs(deltaY) > Math.abs(deltaX) && deltaY < -SWIPE_THRESHOLD) {
+                if (player.isOnGround) {
+                    player.velocityY = jumpStrength;
+                    player.isJumping = true;
+                    player.isOnGround = false;
+                }
+            }
+
+            // Stop all horizontal movement on touch release
+            keys['ArrowLeft'] = false;
+            keys['ArrowRight'] = false;
+        });
+
+
+        // --- Game Functions ---
+
+        async function fetchMonsterBehavior(monsterType) {
+            const prompt = `You are a game AI. For a '${monsterType}' monster in a snowy mountain level, suggest a simple behavior pattern. Choose one from: 'patrol', 'aggressive_patrol', 'stationary_jump', 'random_move'. Also, suggest a 'speed_modifier' (float, e.g., 1.2 for 20% faster) and 'range_modifier' (float, e.g., 1.5 for 50% wider range) if applicable. Respond in JSON format: {'behavior_pattern': '...', 'speed_modifier': ..., 'range_modifier': ...}`;
+
+            let chatHistory = [];
+            chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+            const payload = {
+                contents: chatHistory,
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            "behavior_pattern": { "type": "STRING" },
+                            "speed_modifier": { "type": "NUMBER" },
+                            "range_modifier": { "type": "NUMBER" }
+                        },
+                        "propertyOrdering": ["behavior_pattern", "speed_modifier", "range_modifier"]
+                    }
+                }
+            };
+            const apiKey = ""; // Canvas will automatically provide this at runtime
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                if (result.candidates && result.candidates.length > 0 &&
+                    result.candidates[0].content && result.candidates[0].content.parts &&
+                    result.candidates[0].content.parts.length > 0) {
+                    const json = result.candidates[0].content.parts[0].text;
+                    const parsedJson = JSON.parse(json);
+                    return parsedJson;
+                } else {
+                    console.error("LLM response structure unexpected:", result);
+                    return null;
+                }
+            } catch (error) {
+                console.error("Error fetching monster behavior from LLM:", error);
+                return null;
+            }
+        }
+
+        // Function to set canvas dimensions while maintaining aspect ratio
+        function setCanvasDimensions() {
+            const viewportWidth = window.innerWidth;
+            const viewportHeight = window.innerHeight;
+            const viewportAspectRatio = viewportWidth / viewportHeight;
+
+            let newCanvasWidth;
+            let newCanvasHeight;
+
+            if (viewportAspectRatio > ASPECT_RATIO) {
+                // Viewport is wider than game, constrain by height
+                newCanvasHeight = viewportHeight;
+                newCanvasWidth = newCanvasHeight * ASPECT_RATIO;
+            } else {
+                // Viewport is taller or same aspect ratio as game, constrain by width
+                newCanvasWidth = viewportWidth;
+                newCanvasHeight = newCanvasWidth / ASPECT_RATIO;
+            }
+
+            canvas.width = newCanvasWidth;
+            canvas.height = newCanvasHeight;
+
+            // Update CSS dimensions for canvas to reflect new sizes (important for touch input scaling)
+            canvas.style.width = `${newCanvasWidth}px`;
+            canvas.style.height = `${newCanvasHeight}px`;
+
+            // Reload the current level to re-scale all game objects to the new canvas size
+            loadLevel(currentLevelIndex);
+        }
+
+        async function loadLevel(levelIndex) {
+            // Calculate scaling factors based on current canvas size
+            const scaleX = canvas.width / BASE_GAME_WIDTH;
+            const scaleY = canvas.height / BASE_GAME_HEIGHT;
+
+            // Scale player properties
+            player.width = 40 * scaleX;
+            player.height = 40 * scaleY;
+            player.velocityY = 0;
+            player.isJumping = false;
+
+            // Scale game physics parameters
+            gravity = 0.8 * scaleY;
+            jumpStrength = -20 * scaleY;
+            moveSpeed = 8 * scaleX;
+
+            let levelToLoad;
+            if (levelIndex === REST_LEVEL_INDEX) {
+                levelToLoad = rawRestLevelData;
+            } else if (levelIndex >= 0 && levelIndex < rawLevelsData.length) {
+                levelToLoad = rawLevelsData[levelIndex];
+            } else {
+                // Game finished or invalid level index
+                showChoiceDialog("Congratulations! You've completed all levels!", "Play Again", () => {
+                    lives = MAX_FULL_HEARTS;
+                    score = 0;
+                    loadLevel(0);
+                    updateLivesDisplay();
+                    updateScoreDisplay();
+                }, "Quit", () => {
+                    // No alert, as per instructions.
+                });
+                return; // Exit function if game is over or invalid level
+            }
+
+            // Deep copy and scale game objects for the current level
+            gameObjects = levelToLoad.map(obj => {
+                const scaledObj = { ...obj };
+                scaledObj.x = obj.x * scaleX;
+                scaledObj.y = obj.y * scaleY;
+                scaledObj.width = obj.width * scaleX;
+                scaledObj.height = obj.height * scaleY;
+
+                // Scale initialX and range for opponents if they exist
+                if (obj.initialX !== undefined) scaledObj.initialX = obj.initialX * scaleX;
+                if (obj.range !== undefined) scaledObj.range = obj.range * scaleX;
+
+                // For snow beasts, store original speed/range and fetch behavior
+                if (scaledObj.type === 'snow_beast') {
+                    scaledObj.baseSpeed = scaledObj.speed; // Store original speed
+                    scaledObj.baseRange = scaledObj.range; // Store original range
+                    scaledObj.behavior_pattern = scaledObj.behavior_pattern || 'patrol'; // Default to patrol if not set
+                    scaledObj.lastJumpTime = 0; // For stationary_jump behavior
+                    scaledObj.randomMoveTimer = 0; // For random_move behavior
+                    scaledObj.randomMoveDuration = 0; // For random_move behavior
+
+                    // Fetch behavior from LLM
+                    if (scaledObj.behavior_pattern === 'llm_controlled') {
+                        fetchMonsterBehavior(scaledObj.type).then(llmResponse => {
+                            if (llmResponse) {
+                                scaledObj.behavior_pattern = llmResponse.behavior_pattern || 'patrol';
+                                if (llmResponse.speed_modifier) {
+                                    scaledObj.speed = scaledObj.baseSpeed * llmResponse.speed_modifier;
+                                }
+                                if (llmResponse.range_modifier) {
+                                    scaledObj.range = scaledObj.baseRange * llmResponse.range_modifier;
+                                }
+                                console.log(`Snow beast behavior set to: ${scaledObj.behavior_pattern} (Speed: ${scaledObj.speed.toFixed(2)}, Range: ${scaledObj.range.toFixed(2)})`);
+                            } else {
+                                console.warn("Failed to get LLM behavior, defaulting to patrol.");
+                                scaledObj.behavior_pattern = 'patrol';
+                            }
+                        });
+                    }
+                }
+                return scaledObj;
+            });
+
+            // Adjust player spawn position
+            if (levelIndex === REST_LEVEL_INDEX) {
+                player.x = canvas.width / 2 - player.width / 2;
+                player.y = canvas.height - (190 * scaleY); // Scale initial Y for rest level
+                player.oldY = player.y;
+                player.isOnGround = true;
+                player.velocityY = 0;
+            } else {
+                const startPlatform = gameObjects.find(obj => obj.type === 'platform');
+                if (startPlatform) {
+                    player.x = startPlatform.x + (startPlatform.width / 2) - (player.width / 2);
+                    player.y = startPlatform.y - player.height;
+                    player.oldY = player.y;
+                    player.isOnGround = true;
+                    player.velocityY = 0;
+                } else {
+                    player.x = 50 * scaleX;
+                    player.y = canvas.height - (80 * scaleY);
+                    player.oldY = player.y;
+                    player.isOnGround = true;
+                    player.velocityY = 0;
+                }
+            }
+
+            currentLevelIndex = levelIndex;
+            gameObjects.forEach(obj => {
+                if (obj.type === 'opponent' || obj.type === 'snow_beast') {
+                    obj.x = obj.initialX; // This initialX is already scaled
+                    obj.direction = 1;
+                }
+            });
+            gamePaused = false; // Unpause the game when a new level loads
+            hideChoiceDialog(); // Hide any open dialog
+            updateLivesDisplay(); // Update lives display on level load
+
+            // Initialize snowflakes for snowy levels
+            if (currentLevelIndex >= 15) {
+                createSnowflakes();
+            } else {
+                snowflakes = []; // Clear snowflakes if not a snowy level
+            }
+        }
+
+        // --- Heart Drawing Functions ---
+        const HEART_PIXEL_SIZE = 3; // Size of each 'pixel' in the heart
+        const HEART_WIDTH_PX = 7; // Width of the heart in pixels
+        const HEART_HEIGHT_PX = 7; // Height of the heart in pixels
+        const HEART_SPACING = 5; // Spacing between hearts
+
+        // Pixel pattern for a full heart (7x7 grid)
+        const FULL_HEART_PATTERN = [
+            [0, 1, 1, 0, 1, 1, 0],
+            [1, 1, 1, 1, 1, 1, 1],
+            [1, 1, 1, 1, 1, 1, 1],
+            [1, 1, 1, 1, 1, 1, 1],
+            [0, 1, 1, 1, 1, 1, 0],
+            [0, 0, 1, 1, 1, 0, 0],
+            [0, 0, 0, 1, 0, 0, 0]
+        ];
+
+        // Pixel pattern for a half heart (left half filled, right half empty)
+        const HALF_HEART_PATTERN = [
+            [0, 1, 0, 0, 0, 0, 0],
+            [1, 1, 1, 0, 0, 0, 0],
+            [1, 1, 1, 0, 0, 0, 0],
+            [1, 1, 1, 0, 0, 0, 0],
+            [0, 1, 1, 0, 0, 0, 0],
+            [0, 0, 1, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0]
+        ];
+
+        // Pixel pattern for an empty heart (outline only)
+        const EMPTY_HEART_PATTERN = [
+            [0, 1, 1, 0, 1, 1, 0],
+            [1, 0, 0, 1, 0, 0, 1],
+            [1, 0, 0, 0, 0, 0, 1],
+            [1, 0, 0, 0, 0, 0, 1],
+            [0, 1, 0, 0, 0, 1, 0],
+            [0, 0, 1, 0, 1, 0, 0],
+            [0, 0, 0, 1, 0, 0, 0]
+        ];
+
+        function drawPixelHeart(context, startX, startY, type) {
+            let pattern;
+            let fillColor = '#FF0000'; // Red for full/half
+            let outlineColor = '#000000'; // Black for outline
+
+            if (type === 'full') {
+                pattern = FULL_HEART_PATTERN;
+            } else if (type === 'half') {
+                pattern = HALF_HEART_PATTERN;
+            } else { // type === 'empty'
+                pattern = EMPTY_HEART_PATTERN;
+                fillColor = 'transparent'; // No fill for empty heart
+            }
+
+            for (let row = 0; row < HEART_HEIGHT_PX; row++) {
+                for (let col = 0; col < HEART_WIDTH_PX; col++) {
+                    const pixelX = startX + col * HEART_PIXEL_SIZE;
+                    const pixelY = startY + row * HEART_PIXEL_SIZE;
+
+                    if (pattern[row][col] === 1) {
+                        context.fillStyle = fillColor;
+                        context.fillRect(pixelX, pixelY, HEART_PIXEL_SIZE, HEART_PIXEL_SIZE);
+                    } else if (type === 'empty' && EMPTY_HEART_PATTERN[row][col] === 1) {
+                         // Draw outline for empty heart
+                         context.fillStyle = outlineColor;
+                         context.fillRect(pixelX, pixelY, HEART_PIXEL_SIZE, HEART_PIXEL_SIZE);
+                    }
+                }
+            }
+        }
+
+
+        function updateLivesDisplay() {
+            livesCtx.clearRect(0, 0, livesCanvas.width, livesCanvas.height); // Clear the lives canvas
+
+            // Calculate the required width for the lives canvas based on MAX_FULL_HEARTS
+            // Each heart takes HEART_WIDTH_PX * HEART_PIXEL_SIZE + HEART_SPACING
+            const requiredWidth = (HEART_WIDTH_PX * HEART_PIXEL_SIZE + HEART_SPACING) * Math.ceil(MAX_FULL_HEARTS) - HEART_SPACING;
+            livesCanvas.width = requiredWidth > 0 ? requiredWidth : 1; // Ensure width is at least 1
+
+            const totalHeartSlots = Math.ceil(MAX_FULL_HEARTS); // E.g., 3.5 max hearts means 4 slots
+            const heartRenderWidth = HEART_WIDTH_PX * HEART_PIXEL_SIZE;
+            const heartRenderHeight = HEART_HEIGHT_PX * HEART_PIXEL_SIZE;
+
+            for (let i = 0; i < totalHeartSlots; i++) {
+                const heartStartX = i * (heartRenderWidth + HEART_SPACING);
+                const heartStartY = (livesCanvas.height - heartRenderHeight) / 2; // Center vertically
+
+                if (lives >= i + 1) {
+                    drawPixelHeart(livesCtx, heartStartX, heartStartY, 'full');
+                } else if (lives >= i + 0.5) {
+                    drawPixelHeart(livesCtx, heartStartX, heartStartY, 'half');
+                } else {
+                    drawPixelHeart(livesCtx, heartStartX, heartStartY, 'empty');
+                }
+            }
+        }
+
+        function updateScoreDisplay() {
+            scoreDisplay.textContent = 'Score: ' + score;
+        }
+
+        function loseLife() {
+            lives -= 0.5; // Lose half a heart
+            updateLivesDisplay();
+            if (lives <= 0) {
+                showChoiceDialog("Game Over! You ran out of lives.", "Restart Game", () => {
+                    lives = MAX_FULL_HEARTS; // Reset lives to max
+                    score = 0; // Reset score
+                    loadLevel(0); // Reset to the beginning (Level 0)
+                    updateLivesDisplay();
+                    updateScoreDisplay(); // Update score display
+                }, "Quit", () => {
+                    // No alert, as per instructions.
+                });
+            } else {
+                // Restart the current level after losing a life (but not game over)
+                loadLevel(currentLevelIndex);
+            }
+        }
+
+        function update() {
+            if (gamePaused) return; // Don't update game state if paused
+
+            player.oldY = player.y; // Store current Y before updating
+
+            // Apply gravity
+            player.velocityY += gravity;
+            player.y += player.velocityY;
+
+            // Horizontal movement
+            if (keys['ArrowLeft']) {
+                player.x -= moveSpeed;
+            }
+            if (keys['ArrowRight']) {
+                player.x += moveSpeed;
+            }
+
+            // Keep player within canvas bounds horizontally (only left edge)
+            if (player.x < 0) player.x = 0;
+            // Keep player within canvas bounds horizontally (right edge)
+            if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+
+
+            // Collision detection with game objects
+            let foundGroundThisFrame = false; // New flag to track ground collision in current frame
+            for (let i = 0; i < gameObjects.length; i++) {
+                let obj = gameObjects[i];
+
+                // Check for general overlap
+                if (player.x < obj.x + obj.width &&
+                    player.x + player.width > obj.x &&
+                    player.y < obj.y + obj.height &&
+                    player.y + player.height > obj.y) {
+
+                    if (obj.type === 'platform') {
+                        // More robust vertical collision for platforms
+                        // If player was above the platform and is now overlapping (falling onto it)
+                        if (player.velocityY >= 0 && player.oldY + player.height <= obj.y) {
+                            player.y = obj.y - player.height; // Snap to top of platform
+                            player.velocityY = 0; // Stop vertical movement
+                            foundGroundThisFrame = true; // Player is on ground
+                            player.isJumping = false;
+                        }
+                        // If player was below the platform and is now overlapping (hitting head on it)
+                        else if (player.velocityY < 0 && player.oldY >= obj.y + obj.height) {
+                            player.y = obj.y + obj.height; // Snap to bottom of platform
+                            player.velocityY = 0; // Stop upward movement
+                        }
+                        // Handle horizontal collision if not a vertical one (or if already handled vertically)
+                        else {
+                            const overlapX = Math.min(player.x + player.width - obj.x, obj.x + obj.width - player.x);
+                            if (player.x < obj.x) { // Collided with left side of platform
+                                player.x = obj.x - player.width;
+                            } else { // Collided with right side of platform
+                                player.x = obj.x + obj.width;
+                            }
+                        }
+                    } else if (obj.type === 'obstacle' || obj.type === 'opponent' || obj.type === 'fire_peach' || obj.type === 'ice_spike' || obj.type === 'snow_beast') {
+                        // Collision with obstacle, opponent, fire_peach, ice_spike or snow_beast - lose a life
+                        loseLife();
+                        return; // Stop processing collisions for this frame after losing a life
+                    } else if (obj.type === 'exit') {
+                         // If it's the rest level exit, go to the stored next level
+                         if (currentLevelIndex === REST_LEVEL_INDEX) {
+                             loadLevel(nextLevelAfterHeart);
+                         } else {
+                             loadLevel(currentLevelIndex + 1);
+                         }
+                         return; // Stop updating for this frame after loading new level
+                    } else if (obj.type === 'heart') {
+                        lives = MAX_FULL_HEARTS; // Restore all lives
+                        updateLivesDisplay();
+                        // Remove the heart from the game objects
+                        gameObjects.splice(i, 1);
+                        i--; // Adjust index after removing an item
+
+                        // Pause game and show choice dialog
+                        gamePaused = true;
+                        nextLevelAfterHeart = currentLevelIndex + 1; // Store the actual next level
+                        showChoiceDialog(
+                            "You found a heart! Lives restored. What next?",
+                            "Next Level",
+                            () => loadLevel(nextLevelAfterHeart),
+                            "Visit Friends",
+                            () => loadLevel(REST_LEVEL_INDEX)
+                        );
+                        return; // Stop updating for this frame
+                    } else if (obj.type === 'coin') {
+                        score += 10; // Add points for collecting a coin
+                        updateScoreDisplay();
+                        gameObjects.splice(i, 1); // Remove the coin
+                        i--; // Adjust index after removing an item
+                    }
+                }
+            }
+            player.isOnGround = foundGroundThisFrame; // Set isOnGround based on this frame's collisions
+
+            // Jump
+            if (keys['ArrowUp'] && player.isOnGround) {
+                player.velocityY = jumpStrength;
+                player.isJumping = true;
+                player.isOnGround = false; // No longer on ground after jumping
+            }
+
+            // Check if player fell off the bottom
+            if (player.y > canvas.height) {
+                // Player fell - lose a life
+                loseLife();
+                return; // Stop updating for this frame after losing a life
+            }
+
+            // Update opponent positions (only if not in rest level)
+            if (currentLevelIndex !== REST_LEVEL_INDEX) {
+                gameObjects.forEach(obj => {
+                    if (obj.type === 'opponent') {
+                        obj.x += obj.speed * obj.direction;
+                        if (obj.x > obj.initialX + obj.range || obj.x < obj.initialX - obj.range) {
+                            obj.direction *= -1;
+                        }
+                    } else if (obj.type === 'snow_beast') {
+                        // Apply LLM-controlled behavior
+                        switch (obj.behavior_pattern) {
+                            case 'patrol':
+                            case 'aggressive_patrol': // Aggressive patrol is just faster patrol
+                                obj.x += obj.speed * obj.direction;
+                                if (obj.x > obj.initialX + obj.range || obj.x < obj.initialX - obj.range) {
+                                    obj.direction *= -1;
+                                }
+                                break;
+                            case 'stationary_jump':
+                                // Only jump if on a platform (simplified check)
+                                const onPlatform = gameObjects.some(platform =>
+                                    platform.type === 'platform' &&
+                                    obj.x < platform.x + platform.width &&
+                                    obj.x + obj.width > platform.x &&
+                                    obj.y + obj.height <= platform.y + gravity && // Check if very close to platform top
+                                    obj.y + obj.height >= platform.y - gravity
+                                );
+
+                                if (onPlatform && performance.now() - obj.lastJumpTime > 2000 + Math.random() * 1000) { // Jump every 2-3 seconds
+                                    obj.velocityY = jumpStrength * 0.7; // Smaller jump for monsters
+                                    obj.lastJumpTime = performance.now();
+                                }
+                                obj.y += obj.velocityY;
+                                obj.velocityY += gravity; // Apply gravity to monster
+
+                                // Collision with platforms for stationary_jump
+                                gameObjects.forEach(platform => {
+                                    if (platform.type === 'platform' &&
+                                        obj.x < platform.x + platform.width &&
+                                        obj.x + obj.width > platform.x &&
+                                        obj.y + obj.height > platform.y &&
+                                        obj.oldY + obj.height <= platform.y) {
+                                        obj.y = platform.y - obj.height;
+                                        obj.velocityY = 0;
+                                    }
+                                });
+                                break;
+                            case 'random_move':
+                                if (obj.randomMoveTimer <= 0) {
+                                    // Start a new random movement
+                                    obj.direction = Math.random() < 0.5 ? 1 : -1;
+                                    obj.randomMoveDuration = Math.random() * 60 + 30; // Move for 0.5 to 1 second (30-60 frames)
+                                    obj.randomMoveTimer = obj.randomMoveDuration;
+                                } else {
+                                    obj.x += obj.speed * obj.direction;
+                                    obj.randomMoveTimer--;
+                                }
+                                // Keep within initial range
+                                if (obj.x > obj.initialX + obj.range) {
+                                    obj.x = obj.initialX + obj.range;
+                                    obj.direction = -1;
+                                    obj.randomMoveTimer = 0; // Force new direction
+                                } else if (obj.x < obj.initialX - obj.range) {
+                                    obj.x = obj.initialX - obj.range;
+                                    obj.direction = 1;
+                                    obj.randomMoveTimer = 0; // Force new direction
+                                }
+                                break;
+                            default:
+                                // Fallback to patrol if behavior is unknown
+                                obj.x += obj.speed * obj.direction;
+                                if (obj.x > obj.initialX + obj.range || obj.x < obj.initialX - obj.range) {
+                                    obj.direction *= -1;
+                                }
+                                break;
+                        }
+                    }
+                });
+            }
+
+            // Update snowflakes if present
+            if (currentLevelIndex >= 15) {
+                updateSnowflakes();
+            }
+        }
+
+        function drawMountainBackground() {
+             // Draw background (Mountains - more refined, inspired by Zelda style)
+            ctx.fillStyle = '#A9A9A9'; // Dark grey for mountains
+            ctx.beginPath();
+            // More complex mountain shape with varying peaks and slopes
+            ctx.moveTo(0, canvas.height - 100);
+            ctx.lineTo(canvas.width * 0.08, canvas.height - 220);
+            ctx.lineTo(canvas.width * 0.15, canvas.height - 140);
+            ctx.lineTo(canvas.width * 0.25, canvas.height - 300);
+            ctx.lineTo(canvas.width * 0.35, canvas.height - 180);
+            ctx.lineTo(canvas.width * 0.45, canvas.height - 350);
+            ctx.lineTo(canvas.width * 0.55, canvas.height - 250);
+            ctx.lineTo(canvas.width * 0.65, canvas.height - 400);
+            ctx.lineTo(canvas.width * 0.75, canvas.height - 280);
+            ctx.lineTo(canvas.width * 0.85, canvas.height - 380);
+            ctx.lineTo(canvas.width, canvas.height - 200);
+            ctx.lineTo(canvas.width, canvas.height); // Down to the bottom right
+            ctx.lineTo(0, canvas.height); // Across to the bottom left
+            ctx.closePath();
+            ctx.fill();
+
+            // Add a layer of lighter mountains in the background
+            ctx.fillStyle = '#C0C0C0'; // Light grey
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height - 50);
+            ctx.lineTo(canvas.width * 0.15, canvas.height - 150);
+            ctx.lineTo(canvas.width * 0.3, canvas.height - 80);
+            ctx.lineTo(canvas.width * 0.5, canvas.height - 200);
+            ctx.lineTo(canvas.width * 0.7, canvas.height - 100);
+            ctx.lineTo(canvas.width * 0.85, canvas.height - 220);
+            ctx.lineTo(canvas.width, canvas.height - 100);
+            ctx.lineTo(canvas.width, canvas.height);
+            ctx.lineTo(0, canvas.height);
+            ctx.closePath();
+            ctx.fill();
+
+             // Add a third layer of even lighter mountains
+            ctx.fillStyle = '#D3D3D3'; // Lighter grey
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height - 20);
+            ctx.lineTo(canvas.width * 0.1, canvas.height - 80);
+            ctx.lineTo(canvas.width * 0.2, canvas.height - 30);
+            ctx.lineTo(canvas.width * 0.3, canvas.height - 100);
+            ctx.lineTo(canvas.width * 0.4, canvas.height - 40);
+            ctx.quadraticCurveTo(canvas.width * 0.5, canvas.height - 120, canvas.width * 0.6, canvas.height - 60);
+            ctx.quadraticCurveTo(canvas.width * 0.7, canvas.height - 140, canvas.width * 0.8, canvas.height - 80);
+            ctx.quadraticCurveTo(canvas.width * 0.9, canvas.height - 100, canvas.width, canvas.height - 50);
+            ctx.lineTo(canvas.width, canvas.height);
+            ctx.lineTo(0, canvas.height);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function drawDesertBackground() {
+            // Draw background (Desert - more refined)
+            ctx.fillStyle = '#F5F5DC'; // Beige/Sand color
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw sand dunes (more complex humps)
+            ctx.fillStyle = '#C19A6B'; // Brownish sand color
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height - 50);
+            ctx.quadraticCurveTo(canvas.width * 0.15, canvas.height - 120, canvas.width * 0.3, canvas.height - 60);
+            ctx.quadraticCurveTo(canvas.width * 0.45, canvas.height - 180, canvas.width * 0.6, canvas.height - 80);
+            ctx.quadraticCurveTo(canvas.width * 0.75, canvas.height - 150, canvas.width * 0.9, canvas.height - 70);
+            ctx.quadraticCurveTo(canvas.width * 0.95, canvas.height - 100, canvas.width, canvas.height - 50);
+            ctx.lineTo(canvas.width, canvas.height);
+            ctx.lineTo(0, canvas.height);
+            ctx.closePath();
+            ctx.fill();
+
+             // Add a layer of lighter sand dunes in the background
+            ctx.fillStyle = '#D2B48C'; // Tan color
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height - 20);
+            ctx.quadraticCurveTo(canvas.width * 0.1, canvas.height - 80, canvas.width * 0.2, canvas.height - 30);
+            ctx.quadraticCurveTo(canvas.width * 0.3, canvas.height - 100, canvas.width * 0.4, canvas.height - 40);
+            ctx.quadraticCurveTo(canvas.width * 0.5, canvas.height - 120, canvas.width * 0.6, canvas.height - 60);
+            ctx.quadraticCurveTo(canvas.width * 0.7, canvas.height - 140, canvas.width * 0.8, canvas.height - 80);
+            ctx.quadraticCurveTo(canvas.width * 0.9, canvas.height - 100, canvas.width, canvas.height - 50);
+            ctx.lineTo(canvas.width, canvas.height);
+            ctx.lineTo(0, canvas.height);
+            ctx.closePath();
+            ctx.fill();
+
+
+            // Draw a sun
+            ctx.fillStyle = '#FFA500'; // Orange/Yellow
+            ctx.beginPath();
+            ctx.arc(canvas.width - 80, 60, 40, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawSnowyMountainBackground() {
+            // Background color for sky (darker for aurora)
+            ctx.fillStyle = '#1A1A2E'; // Dark blue/purple for night sky
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Aurora Borealis (faint, wavy bands)
+            const auroraHeight = canvas.height * 0.3;
+            const auroraY = canvas.height * 0.1;
+
+            const gradient = ctx.createLinearGradient(0, auroraY, 0, auroraY + auroraHeight);
+            gradient.addColorStop(0, 'rgba(0, 255, 0, 0.3)'); // Green
+            gradient.addColorStop(0.3, 'rgba(0, 200, 255, 0.3)'); // Light Blue
+            gradient.addColorStop(0.6, 'rgba(150, 0, 255, 0.3)'); // Purple
+            gradient.addColorStop(1, 'rgba(0, 0, 0, 0)'); // Transparent
+
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.moveTo(0, auroraY + Math.sin(Date.now() * 0.0001) * 20);
+            for (let i = 0; i <= canvas.width; i += 20) {
+                ctx.lineTo(i, auroraY + Math.sin(i * 0.01 + Date.now() * 0.0002) * 30 + Math.sin(i * 0.05 + Date.now() * 0.0003) * 15);
+            }
+            ctx.lineTo(canvas.width, auroraY + auroraHeight);
+            ctx.lineTo(0, auroraY + auroraHeight);
+            ctx.closePath();
+            ctx.fill();
+
+            // Snowy mountains (more varied and jagged)
+            ctx.fillStyle = '#FFFFFF'; // White for snow
+            ctx.beginPath();
+            // Main mountain range
+            ctx.moveTo(0, canvas.height - 150);
+            ctx.lineTo(canvas.width * 0.08, canvas.height - 300);
+            ctx.lineTo(canvas.width * 0.15, canvas.height - 180);
+            ctx.lineTo(canvas.width * 0.25, canvas.height - 350);
+            ctx.lineTo(canvas.width * 0.35, canvas.height - 220);
+            ctx.lineTo(canvas.width * 0.45, canvas.height - 400);
+            ctx.lineTo(canvas.width * 0.55, canvas.height - 250);
+            ctx.lineTo(canvas.width * 0.7, canvas.height - 450);
+            ctx.lineTo(canvas.width * 0.85, canvas.height - 300);
+            ctx.lineTo(canvas.width, canvas.height - 200);
+            ctx.lineTo(canvas.width, canvas.height);
+            ctx.lineTo(0, canvas.height);
+            ctx.closePath();
+            ctx.fill();
+
+            // Darker shades for mountain texture (simplified)
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.1)'; // Light shadow
+            ctx.beginPath();
+            ctx.moveTo(canvas.width * 0.1, canvas.height - 300);
+            ctx.lineTo(canvas.width * 0.15, canvas.height - 250);
+            ctx.lineTo(canvas.width * 0.25, canvas.height - 180);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.moveTo(canvas.width * 0.4, canvas.height - 350);
+            ctx.lineTo(canvas.width * 0.45, canvas.height - 280);
+            ctx.lineTo(canvas.width * 0.55, canvas.height - 200);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.moveTo(canvas.width * 0.7, canvas.height - 400);
+            ctx.lineTo(canvas.width * 0.75, canvas.height - 300);
+            ctx.lineTo(canvas.width * 0.85, canvas.height - 250);
+            ctx.closePath();
+            ctx.fill();
+
+            // Pine trees (more detailed)
+            ctx.fillStyle = '#228B22'; // Forest green
+            // Left group
+            ctx.beginPath();
+            ctx.moveTo(30, canvas.height - 100);
+            ctx.lineTo(50, canvas.height - 150);
+            ctx.lineTo(70, canvas.height - 100);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.moveTo(60, canvas.height - 80);
+            ctx.lineTo(80, canvas.height - 130);
+            ctx.lineTo(100, canvas.height - 80);
+            ctx.closePath();
+            ctx.fill();
+
+            // Right group
+            ctx.beginPath();
+            ctx.moveTo(canvas.width - 100, canvas.height - 120);
+            ctx.lineTo(canvas.width - 80, canvas.height - 170);
+            ctx.lineTo(canvas.width - 60, canvas.height - 120);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.moveTo(canvas.width - 130, canvas.height - 90);
+            ctx.lineTo(canvas.width - 110, canvas.height - 140);
+            ctx.lineTo(canvas.width - 90, canvas.height - 90);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+
+        function drawRestBackground() {
+            ctx.fillStyle = '#B0E0E6'; // Light blue for a peaceful sky
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Green grass/hill
+            ctx.fillStyle = '#8FBC8F'; // Darker green
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height - 80);
+            ctx.quadraticCurveTo(canvas.width * 0.25, canvas.height - 150, canvas.width * 0.5, canvas.height - 80);
+            ctx.quadraticCurveTo(canvas.width * 0.75, canvas.height - 10, canvas.width, canvas.height - 80);
+            ctx.lineTo(canvas.width, canvas.height);
+            ctx.lineTo(0, canvas.height);
+            ctx.closePath();
+            ctx.fill();
+
+            // Sun
+            ctx.fillStyle = '#FFD700'; // Gold
+            ctx.beginPath();
+            ctx.arc(canvas.width - 100, 100, 50, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Simple trees
+            ctx.fillStyle = '#8B4513'; // Brown trunk
+            ctx.fillRect(50, canvas.height - 150, 20, 70);
+            ctx.fillRect(canvas.width - 70, canvas.height - 150, 20, 70);
+            ctx.fillStyle = '#228B22'; // Forest green leaves
+            ctx.beginPath();
+            ctx.arc(60, canvas.height - 170, 40, 0, Math.PI * 2);
+            ctx.arc(canvas.width - 60, canvas.height - 170, 40, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+
+        function drawPineapple() {
+            // Draw player (more refined pineapple)
+            ctx.fillStyle = player.color;
+            ctx.beginPath();
+            // Draw a rounded base for the pineapple body with segments
+            const pineappleBaseWidth = player.width * 0.8;
+            const pineappleBaseHeight = player.height * 0.8;
+            const pineappleBaseX = player.x + (player.width - pineappleBaseWidth) / 2;
+            const pineappleBaseY = player.y + player.height - pineappleBaseHeight;
+            const baseRadius = pineappleBaseWidth * 0.2;
+
+            // Draw main body shape
+            ctx.moveTo(pineappleBaseX + baseRadius, pineappleBaseY);
+            ctx.lineTo(pineappleBaseX + pineappleBaseWidth - baseRadius, pineappleBaseY);
+            ctx.arcTo(pineappleBaseX + pineappleBaseWidth, pineappleBaseY, pineappleBaseX + pineappleBaseWidth, pineappleBaseY + baseRadius, baseRadius);
+            ctx.lineTo(pineappleBaseX + pineappleBaseWidth, pineappleBaseY + pineappleBaseHeight - baseRadius);
+            ctx.arcTo(pineappleBaseX + pineappleBaseWidth, pineappleBaseY + pineappleBaseHeight, pineappleBaseX + pineappleBaseWidth - baseRadius, pineappleBaseY + pineappleBaseHeight, baseRadius);
+            ctx.lineTo(pineappleBaseX + baseRadius, pineappleBaseY + pineappleBaseHeight);
+            ctx.arcTo(pineappleBaseX, pineappleBaseY + pineappleBaseHeight, pineappleBaseX, pineappleBaseY + pineappleBaseHeight - baseRadius, baseRadius);
+            ctx.lineTo(pineappleBaseX, pineappleBaseY + baseRadius);
+            ctx.arcTo(pineappleBaseX, pineappleBaseY, pineappleBaseX + baseRadius, pineappleBaseY, baseRadius);
+            ctx.closePath();
+            ctx.fill();
+
+            // Draw some simple segments/texture lines
+            ctx.strokeStyle = '#C19A6B'; // Brownish color for lines
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            // Horizontal lines
+            for (let i = 1; i < 4; i++) {
+                ctx.moveTo(pineappleBaseX, pineappleBaseY + pineappleBaseHeight * (i / 4));
+                ctx.lineTo(pineappleBaseX + pineappleBaseWidth, pineappleBaseY + pineappleBaseHeight * (i / 4));
+            }
+             // Vertical lines (simplified)
+             for (let i = 1; i < 3; i++) {
+                ctx.moveTo(pineappleBaseX + pineappleBaseWidth * (i / 3), pineappleBaseY);
+                ctx.lineTo(pineappleBaseX + pineappleBaseWidth * (i / 3), pineappleBaseY + pineappleBaseHeight);
+             }
+            ctx.stroke();
+
+
+            // Draw pineapple leaves (more refined)
+            ctx.fillStyle = player.leafColor;
+            ctx.beginPath();
+            // Draw a few leaf shapes with curves
+            ctx.moveTo(player.x + player.width * 0.4, player.y);
+            ctx.quadraticCurveTo(player.x + player.width * 0.5, player.y - player.height * 0.5, player.x + player.width * 0.6, player.y);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.moveTo(player.x + player.width * 0.3, player.y + player.height * 0.1);
+            ctx.quadraticCurveTo(player.x + player.width * 0.4, player.y - player.height * 0.4, player.x + player.width * 0.5, player.y + player.height * 0.1);
+            ctx.closePath();
+            ctx.fill();
+
+             ctx.beginPath();
+            ctx.moveTo(player.x + player.width * 0.5, player.y + player.height * 0.1);
+            ctx.quadraticCurveTo(player.x + player.width * 0.6, player.y - player.height * 0.4, player.x + player.width * 0.7, player.y + player.height * 0.1);
+            ctx.closePath();
+            ctx.fill();
+
+             ctx.beginPath();
+            ctx.moveTo(player.x + player.width * 0.2, player.y + player.height * 0.2);
+            ctx.quadraticCurveTo(player.x + player.width * 0.3, player.y - player.height * 0.3, player.x + player.width * 0.4, player.y + player.height * 0.2);
+            ctx.closePath();
+            ctx.fill();
+
+             ctx.beginPath();
+            ctx.moveTo(player.x + player.width * 0.6, player.y + player.height * 0.2);
+            ctx.quadraticCurveTo(player.x + player.width * 0.7, player.y - player.height * 0.3, player.x + player.width * 0.8, player.y + player.height * 0.2);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function drawOpponent(opponent) {
+             // Draw opponent (more refined - simple blob-like shape with eyes and a mouth)
+             ctx.fillStyle = opponent.color;
+             ctx.beginPath();
+             ctx.moveTo(opponent.x + opponent.width * 0.5, opponent.y);
+             ctx.quadraticCurveTo(opponent.x + opponent.width * 0.1, opponent.y + opponent.height * 0.2, opponent.x, opponent.y + opponent.height * 0.5);
+             ctx.quadraticCurveTo(opponent.x + opponent.width * 0.1, opponent.y + opponent.height, opponent.x + opponent.width * 0.5, opponent.y + opponent.height);
+             ctx.quadraticCurveTo(opponent.x + opponent.width * 0.9, opponent.y + opponent.height, opponent.x + opponent.width, opponent.y + opponent.height * 0.5);
+             ctx.quadraticCurveTo(opponent.x + opponent.width * 0.9, opponent.y + opponent.height * 0.2, opponent.x + opponent.width * 0.5, opponent.y);
+             ctx.closePath();
+             ctx.fill();
+
+
+             // Draw eyes
+             ctx.fillStyle = '#FFFFFF'; // White for eyes
+             ctx.beginPath();
+             ctx.arc(opponent.x + opponent.width * 0.4, opponent.y + opponent.height * 0.4, opponent.width * 0.15, 0, Math.PI * 2);
+             ctx.arc(opponent.x + opponent.width * 0.6, opponent.y + opponent.height * 0.4, opponent.width * 0.15, 0, Math.PI * 2);
+             ctx.fill();
+             ctx.fillStyle = '#000000'; // Black for pupils
+             ctx.beginPath();
+             ctx.arc(opponent.x + opponent.width * 0.4, opponent.y + opponent.height * 0.4, opponent.width * 0.07, 0, Math.PI * 2);
+             ctx.arc(opponent.x + opponent.width * 0.6, opponent.y + opponent.height * 0.4, opponent.width * 0.07, 0, Math.PI * 2);
+             ctx.fill();
+
+             // Draw mouth
+             ctx.strokeStyle = '#000000'; // Black for mouth
+             ctx.lineWidth = 2;
+             ctx.beginPath();
+             ctx.arc(opponent.x + opponent.width * 0.5, opponent.y + opponent.height * 0.7, opponent.width * 0.2, 0, Math.PI); // Simple arc for a smile
+             ctx.stroke();
+        }
+
+        function drawFirePeach(firePeach) {
+            // Draw Fire Peach (simple peach shape with fire representation)
+            ctx.fillStyle = firePeach.color; // Peach color
+            ctx.beginPath();
+            // Simple peach shape using curves
+            ctx.moveTo(firePeach.x + firePeach.width * 0.5, firePeach.y);
+            ctx.quadraticCurveTo(firePeach.x, firePeach.y + firePeach.height * 0.3, firePeach.x, firePeach.y + firePeach.height * 0.7);
+            ctx.quadraticCurveTo(firePeach.x + firePeach.width * 0.3, firePeach.y + firePeach.height, firePeach.x + firePeach.width * 0.5, firePeach.y + firePeach.height);
+            ctx.quadraticCurveTo(firePeach.x + firePeach.width * 0.7, firePeach.y + firePeach.height, firePeach.x + firePeach.width, firePeach.y + firePeach.height * 0.7);
+            ctx.quadraticCurveTo(firePeach.x + firePeach.width, firePeach.y + firePeach.height * 0.3, firePeach.x + firePeach.width * 0.5, firePeach.y);
+            ctx.closePath();
+            ctx.fill();
+
+            // Add simple fire representation (red/orange circles)
+            ctx.fillStyle = '#FF4500'; // Orange-Red
+            ctx.beginPath();
+            ctx.arc(firePeach.x + firePeach.width * 0.2, firePeach.y + firePeach.height * 0.8, firePeach.width * 0.15, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(firePeach.x + firePeach.width * 0.8, firePeach.y + firePeach.height * 0.8, firePeach.width * 0.15, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#FF8C00'; // Dark Orange
+             ctx.beginPath();
+            ctx.arc(firePeach.x + firePeach.width * 0.5, firePeach.y + firePeach.height * 0.9, firePeach.width * 0.1, 0, Math.PI * 2);
+            ctx.fill();
+
+             // Add simple eyes
+             ctx.fillStyle = '#000000'; // Black for eyes
+             ctx.beginPath();
+             ctx.arc(firePeach.x + firePeach.width * 0.4, firePeach.y + firePeach.height * 0.4, firePeach.width * 0.08, 0, Math.PI * 2);
+             ctx.arc(firePeach.x + firePeach.width * 0.6, firePeach.y + firePeach.height * 0.4, firePeach.width * 0.08, 0, Math.PI * 2);
+             ctx.fill();
+        }
+
+        function drawIceSpike(spike) {
+            ctx.fillStyle = spike.color; // Light blue for ice
+            ctx.beginPath();
+            ctx.moveTo(spike.x, spike.y + spike.height); // Bottom-left
+            ctx.lineTo(spike.x + spike.width / 2, spike.y); // Top point
+            ctx.lineTo(spike.x + spike.width, spike.y + spike.height); // Bottom-right
+            ctx.closePath();
+            ctx.fill();
+            ctx.strokeStyle = '#6A5ACD'; // Darker blue for outline
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        function drawSnowBeast(beast) {
+            ctx.fillStyle = beast.color; // Dark blue/purple for snow beast
+            ctx.beginPath();
+            // Rounded body
+            ctx.arc(beast.x + beast.width / 2, beast.y + beast.height / 2, beast.width / 2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Eyes
+            ctx.fillStyle = '#FFFFFF'; // White for eyes
+            ctx.beginPath();
+            ctx.arc(beast.x + beast.width * 0.35, beast.y + beast.height * 0.4, beast.width * 0.1, 0, Math.PI * 2);
+            ctx.arc(beast.x + beast.width * 0.65, beast.y + beast.height * 0.4, beast.width * 0.1, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#000000'; // Black for pupils
+            ctx.beginPath();
+            ctx.arc(beast.x + beast.width * 0.35, beast.y + beast.height * 0.4, beast.width * 0.05, 0, Math.PI * 2);
+            ctx.arc(beast.x + beast.width * 0.65, beast.y + beast.height * 0.4, beast.width * 0.05, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Mouth (simple line)
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(beast.x + beast.width * 0.3, beast.y + beast.height * 0.7);
+            ctx.lineTo(beast.x + beast.width * 0.7, beast.y + beast.height * 0.7);
+            ctx.stroke();
+        }
+
+
+        function drawHeart(heart) {
+            ctx.fillStyle = heart.color; // Red
+            ctx.beginPath();
+            const x = heart.x + heart.width / 2;
+            const y = heart.y + heart.height / 2;
+            const radius = heart.width / 4;
+
+            // Left hump
+            ctx.arc(x - radius, y - radius, radius, Math.PI, 0);
+            // Right hump
+            ctx.arc(x + radius, y - radius, radius, Math.PI, 0);
+            // Pointy bottom
+            ctx.lineTo(x, y + heart.height / 2);
+            ctx.closePath();
+            ctx.fill();
+            ctx.strokeStyle = '#8B0000'; // Darker red border
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
+        function drawFriend(friend) {
+            ctx.fillStyle = friend.color; // Gold color for friends
+            ctx.beginPath();
+            // Simple circular head
+            ctx.arc(friend.x + friend.width / 2, friend.y + friend.height / 4, friend.width / 3, 0, Math.PI * 2);
+            ctx.fill();
+            // Simple rectangular body
+            ctx.fillRect(friend.x + friend.width / 4, friend.y + friend.height / 2, friend.width / 2, friend.height / 2);
+
+            // Eyes
+            ctx.fillStyle = '#000000';
+            ctx.beginPath();
+            ctx.arc(friend.x + friend.width * 0.4, friend.y + friend.height * 0.3, friend.width * 0.05, 0, Math.PI * 2);
+            ctx.arc(friend.x + friend.width * 0.6, friend.y + friend.height * 0.3, friend.width * 0.05, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawCoin(coin) {
+            ctx.fillStyle = coin.color; // Gold color for coins
+            ctx.beginPath();
+            ctx.arc(coin.x + coin.width / 2, coin.y + coin.height / 2, coin.width / 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#DAA520'; // Darker gold border
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Add a simple star shape inside the coin
+            ctx.fillStyle = '#FFFFFF'; // White for star
+            const starRadius = coin.width * 0.3;
+            const starX = coin.x + coin.width / 2;
+            const starY = coin.y + coin.height / 2;
+            ctx.beginPath();
+            for (let i = 0; i < 5; i++) {
+                ctx.lineTo(starX + starRadius * Math.cos(i * Math.PI * 2 / 5 + Math.PI / 2),
+                           starY + starRadius * Math.sin(i * Math.PI * 2 / 5 + Math.PI / 2));
+                ctx.lineTo(starX + starRadius / 2 * Math.cos(i * Math.PI * 2 / 5 + Math.PI / 2 + Math.PI / 5),
+                           starY + starRadius / 2 * Math.sin(i * Math.PI * 2 / 5 + Math.PI / 2 + Math.PI / 5));
+            }
+            ctx.closePath();
+            ctx.fill();
+        }
+
+
+        function draw() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw background based on level
+            if (currentLevelIndex === REST_LEVEL_INDEX) {
+                drawRestBackground();
+            } else if (currentLevelIndex < 5) { // Levels 0-4 (Mountain)
+                drawMountainBackground();
+            } else if (currentLevelIndex >= 5 && currentLevelIndex < 15) { // Levels 5-14 (Desert)
+                drawDesertBackground();
+            } else { // Levels 15 onwards (Snowy Mountain)
+                drawSnowyMountainBackground();
+                drawSnowflakes(); // Draw snowflakes for snowy levels
+            }
+
+
+            // Draw clouds (their positions need to be scaled too)
+            const scaleX = canvas.width / BASE_GAME_WIDTH;
+            const scaleY = canvas.height / BASE_GAME_HEIGHT;
+
+            ctx.fillStyle = '#FFFFFF'; // White color for clouds
+            clouds.forEach(cloud => {
+                 // Draw multiple overlapping circles for a cloud shape
+                 ctx.beginPath();
+                 ctx.arc(cloud.x * scaleX, cloud.y * scaleY, cloud.height * 0.6 * scaleY, 0, Math.PI * 2);
+                 ctx.arc((cloud.x + cloud.width * 0.4) * scaleX, cloud.y * scaleY, cloud.height * 0.7 * scaleY, 0, Math.PI * 2);
+                 ctx.arc((cloud.x + cloud.width * 0.7) * scaleX, (cloud.y + cloud.height * 0.2) * scaleY, cloud.height * 0.5 * scaleY, 0, Math.PI * 2);
+                 ctx.arc((cloud.x + cloud.width * 0.3) * scaleX, (cloud.y + cloud.height * 0.3) * scaleY, cloud.height * 0.5 * scaleY, 0, Math.PI * 2);
+                 ctx.arc((cloud.x + cloud.width * 0.6) * scaleX, (cloud.y + cloud.height * 0.3) * scaleY, cloud.height * 0.6 * scaleY, 0, Math.PI * 2);
+                 ctx.fill();
+            });
+
+
+            // Draw game objects (platforms, obstacles, opponents, exits, hearts, friends, coins)
+            gameObjects.forEach(obj => {
+                ctx.fillStyle = obj.color;
+                if (obj.type === 'platform') {
+                     ctx.fillRect(obj.x, obj.y, obj.width, obj.height);
+                } else if (obj.type === 'obstacle') {
+                     // Draw obstacle (red square with spikes)
+                     ctx.fillRect(obj.x, obj.y, obj.width, obj.height);
+                     ctx.fillStyle = '#000000'; // Black for spikes
+                     ctx.beginPath();
+                     ctx.moveTo(obj.x, obj.y);
+                     ctx.lineTo(obj.x + obj.width / 2, obj.y - obj.height / 2);
+                     ctx.lineTo(obj.x + obj.width, obj.y);
+                     ctx.closePath();
+                     ctx.fill();
+                } else if (obj.type === 'opponent') {
+                     drawOpponent(obj); // Use the dedicated opponent drawing function
+                } else if (obj.type === 'fire_peach') {
+                     drawFirePeach(obj); // Use the dedicated fire peach drawing function
+                } else if (obj.type === 'ice_spike') {
+                    drawIceSpike(obj); // Draw the new ice spike obstacle
+                } else if (obj.type === 'snow_beast') {
+                    drawSnowBeast(obj); // Draw the new snow beast enemy
+                }
+                else if (obj.type === 'exit') {
+                    // Draw exit (green block - can be made more visually distinct)
+                    ctx.fillStyle = obj.color;
+                    ctx.fillRect(obj.x, obj.y, obj.width, obj.height);
+                    // Add some simple detail to the exit block (like a flag pole and flag)
+                    ctx.strokeStyle = '#000000';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(obj.x + obj.width / 2, obj.y + obj.height);
+                    ctx.lineTo(obj.x + obj.width / 2, obj.y - obj.height * 0.5);
+                    ctx.stroke();
+                    ctx.fillStyle = '#FFFF00'; // Yellow flag
+                    ctx.beginPath();
+                    ctx.moveTo(obj.x + obj.width / 2, obj.y - obj.height * 0.5);
+                    ctx.lineTo(obj.x + obj.width * 1.5, obj.y - obj.height * 0.4);
+                    ctx.lineTo(obj.x + obj.width * 1.5, obj.y - obj.height * 0.1);
+                    ctx.lineTo(obj.x + obj.width / 2, obj.y - obj.height * 0.2);
+                    ctx.closePath();
+                    ctx.fill();
+
+                } else if (obj.type === 'heart') {
+                    drawHeart(obj);
+                } else if (obj.type === 'friend') {
+                    drawFriend(obj);
+                } else if (obj.type === 'coin') {
+                    drawCoin(obj); // Draw the coin
+                }
+            });
+
+            drawPineapple(); // Use the dedicated pineapple drawing function
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop); // Loop the game
+        }
+
+        // --- Choice Dialog Functions ---
+        function showChoiceDialog(text, option1Text, option1Callback, option2Text, option2Callback) {
+            choiceText.textContent = text;
+            option1Button.textContent = option1Text;
+            option2Button.textContent = option2Text;
+
+            // Clear previous event listeners to prevent multiple calls
+            option1Button.onclick = null;
+            option2Button.onclick = null;
+
+            option1Button.onclick = () => {
+                hideChoiceDialog();
+                option1Callback();
+            };
+            option2Button.onclick = () => {
+                hideChoiceDialog();
+                option2Callback();
+            };
+
+            choiceDialog.style.display = 'block';
+            gamePaused = true; // Pause the game when dialog is open
+        }
+
+        function hideChoiceDialog() {
+            choiceDialog.style.display = 'none';
+            gamePaused = false; // Unpause the game
+        }
+
+
+        // --- Start the Game ---
+        window.onload = function() {
+            setCanvasDimensions(); // Set initial canvas size and load level
+            updateLivesDisplay(); // Display initial lives
+            updateScoreDisplay(); // Display initial score
+            gameLoop(); // Start the game loop
+        };
+
+         // Handle window resizing
+        window.addEventListener('resize', () => {
+            setCanvasDimensions(); // Re-calculate canvas dimensions on resize
+        });
+
+
+    </script>
+</body>
+</html>
